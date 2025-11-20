@@ -37,7 +37,7 @@ C_Reserva = modelo.addVars(K, T, lb=0, vtype=GRB.CONTINUOUS, name="Capacidad_Res
 
 class SolarPequeña:
     def __init__(self):
-        self.precioInstalacion = 718_867.92 # Valor real
+        self.precioInstalacion = 685 # Valor real
         self.emisionCO2 = 40 #gCO2/kWh
         self.espacioUtilizado = 1000
         self.distanciaMinimaAHogar = 0 # No se necesita distancia mínima
@@ -47,7 +47,7 @@ class SolarPequeña:
 
 class SolarGrande:
     def __init__(self):
-        self.precioInstalacion = 906_603.77 # Valor real
+        self.precioInstalacion = 762 # Valor real
         self.emisionCO2 = 40 #gCO2/kWh
         self.espacioUtilizado = 21670
         self.distanciaMinimaAHogar = 0 # No se necesita distancia mínima
@@ -57,7 +57,7 @@ class SolarGrande:
 
 class EolicaPequeña:
     def __init__(self):
-        self.precioInstalacion = 1_152_830.19 # Valor real
+        self.precioInstalacion = 1222 # Valor real
         self.emisionCO2 = 5.3 #gCO2/kWh
         self.espacioUtilizado = 162_000 # Valor real
         self.distanciaMinimaAHogar = 500 # Valor real
@@ -67,7 +67,7 @@ class EolicaPequeña:
 
 class EolicaGrande:
     def __init__(self):
-        self.precioInstalacion = 1_409_433.96 # Valor real
+        self.precioInstalacion = 1494 # Valor real
         self.emisionCO2 = 5.3 #gCO2/kWh
         self.espacioUtilizado = 202_500 # Valor real
         self.distanciaMinimaAHogar = 500 # Valor real
@@ -77,7 +77,7 @@ class EolicaGrande:
 
 class BateriaLitio:
     def __init__(self):
-        self.precioInstalacion = 1_467_924.53 # Valor real
+        self.precioInstalacion = 1556 # Valor real
         self.emisionCO2 = 168_000 #gCO2/kWh
         self.espacioUtilizado = 0.3
         self.capacidadMaximaAlmacenada = 230 # Valor real
@@ -85,7 +85,7 @@ class BateriaLitio:
 
 class BateriaPlomoAcido:
     def __init__(self):
-        self.precioInstalacion = 1_603_773.58 # Valor real
+        self.precioInstalacion = 1700 # Valor real
         self.emisionCO2 = 175_000 #gCO2/kWh
         self.espacioUtilizado = 5.74
         self.capacidadMaximaAlmacenada = 1.2 # Valor real
@@ -93,7 +93,7 @@ class BateriaPlomoAcido:
 
 class BateriaFlujo:
     def __init__(self):
-        self.precioInstalacion = 1_037_735.85 # Valor real
+        self.precioInstalacion = 1100 # Valor real
         self.emisionCO2 = 183_000 #gCO2/kWh
         self.espacioUtilizado = 13.74
         self.capacidadMaximaAlmacenada = 800 # Valor real
@@ -110,8 +110,8 @@ class Terreno:
 
 
 
-Terrenos = [Terreno(precioArriendo=2_981_132.07, tamaño=10_000_000, distanciaAHogar=500), # Poniente
-            Terreno(precioArriendo=2_062_264.15, tamaño=10_000_000, distanciaAHogar=500)] # Oriente
+Terrenos = [Terreno(precioArriendo=3160, tamaño=11_542_500, distanciaAHogar=500), # Poniente
+            Terreno(precioArriendo=2186, tamaño=11_542_500, distanciaAHogar=500)] # Oriente
 
 
 class Simulacion:
@@ -139,7 +139,7 @@ aumentoDemandaAnual = 1.0339 # Parametro real
 p = [i.precioInstalacion for i in Infraestructuras]
 c = [i.emisionCO2 for i in Infraestructuras]
 p_arriendo = [t.precioArriendo for t in Terrenos]
-q_presupuesto = 3_266_037_735.29
+q_presupuesto = 3_462_000
 
 # Caracteristicas fisicas y operativas
 
@@ -289,17 +289,17 @@ modelo.addConstrs(
 # 10) 
 # if t>=1 agregado
 
-modelo.addConstrs(
-    (
-        sum(Beta[t,z] for z in Z) >= 0.05 * sum(SProduciendo[k,j,t] * b[j] for k in K for j in JBaterias) * len(Z)
-        for t in T if t >= 1
-    ),
-    name="almacenamiento_promedio_minimo_suave"
-)
+# modelo.addConstrs(
+#     (
+#         sum(Beta[t,z] for z in Z) >= 0.05 * sum(SProduciendo[k,j,t] * b[j] for k in K for j in JBaterias) * len(Z)
+#         for t in T if t >= 1
+#     ),
+#     name="almacenamiento_promedio_minimo_suave"
+# )
 
 modelo.addConstrs(
     (
-        Beta[t,z+1] ==  # <--- AQUI ESTÁ LA CLAVE: IGUALDAD
+        Beta[t,z+1] ==
         Beta[t,z] +
         # Producción diaria
         sum(SProduciendo[k,j,t] * w[j,k] * gamma[j,z] for (k,j) in product(K, JProductores)) / 365
@@ -346,7 +346,6 @@ modelo.addConstrs(
     name="13)"
 )
 
-# Agrega esto justo después de definir Beta
 # Calcula la capacidad total instalada en el año t
 CapacidadTotal = {
     t: sum(SProduciendo[k,j,t] * b[j] for k in K for j in JBaterias) 
@@ -355,7 +354,7 @@ CapacidadTotal = {
 
 # Restricción: El nivel de carga nunca baja del 20% de la capacidad instalada
 modelo.addConstrs(
-    (Beta[t,z] >= 0.05 * CapacidadTotal[t] for t in T if t >= 1 for z in Z),
+    (Beta[t,z] >= 0.2 * CapacidadTotal[t] for t in T if t >= 1 for z in Z),
     name="Minimo_Estado_Carga"
 )
 
@@ -384,8 +383,8 @@ if modelo.status == GRB.OPTIMAL:
         total_emisiones = modelo.objVal/1000  # Convertir gCO2 a kgCO2
         total_arriendo = sum(X[k,t].x * p_arriendo[k] for k in K for t in T)
         
-        f.write(f"• Inversión total: ${total_inversion:,.0f} pesos\n")
-        f.write(f"• Costo arriendo total: ${total_arriendo:,.0f} pesos\n")
+        f.write(f"• Inversión total: ${total_inversion:,.0f} USD\n")
+        f.write(f"• Costo arriendo total: ${total_arriendo:,.0f} USD\n")
         f.write(f"• Emisiones totales de CO2: {total_emisiones:,.0f} kgCO2/kWh\n")
         f.write(f"• Presupuesto utilizado: {(total_inversion + total_arriendo)/q_presupuesto*100:.1f}%\n")
 
