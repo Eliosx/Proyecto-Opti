@@ -24,6 +24,14 @@ X = modelo.addVars(K, T, lb=0, vtype=GRB.BINARY, name="X")
 SProduciendo = modelo.addVars(K, J, T, lb=0, vtype=GRB.INTEGER, name="SProduciendo")
 SContruccion = modelo.addVars(K, J, T, lb=0, vtype=GRB.INTEGER, name="SContruccion")
 Beta = modelo.addVars(T, Z, lb=0, vtype=GRB.CONTINUOUS, name="Beta")
+
+# Variable para la energía que se produce pero se desperdicia (porque la batería está llena)
+Vertimiento = modelo.addVars(T, Z, lb=0, vtype=GRB.CONTINUOUS, name="Vertimiento")
+# NUEVA VARIABLE DE DECISIÓN: Capacidad de Reserva
+# Esto desacopla la Capacidad Total (Beta) del requisito legal.
+C_Reserva = modelo.addVars(K, T, lb=0, vtype=GRB.CONTINUOUS, name="Capacidad_Reserva")
+
+
 # # Parametros
 # Debemos rellenar estos datos
 
@@ -219,15 +227,25 @@ modelo.addConstrs(
     ),
     name="5)"
 )
-# 6. # if t>=1 agregado
-
+# 6a) Restricción del Mercado (Obliga a comprar la capacidad de reserva mínima)
+# La capacidad de reserva comprada (C_Reserva) debe ser al menos el mínimo requerido.
 modelo.addConstrs(
     (
-        sum(b[j] * SProduciendo[k,j,t] for j in JBaterias) >=
+        C_Reserva[k,t] >=
         sum(SProduciendo[k,j,t] * w[j,k] * v_guardada[j] for j in JProductores)/365
         for (k,t) in product(K, T) if t >= 1
     ),
-    name="6)"
+    name="6a_Reserva_Minima"
+)
+
+# 6b) Restricción Física (La capacidad total debe ser mayor que la reserva)
+# La suma de TODAS las baterías instaladas debe cubrir al menos la Reserva.
+modelo.addConstrs(
+    (
+        sum(b[j] * SProduciendo[k,j,t] for j in JBaterias) >= C_Reserva[k,t]
+        for (k,t) in product(K, T) if t >= 1
+    ),
+    name="6b_Capacidad_Cubre_Reserva"
 )
 
 
@@ -279,26 +297,22 @@ modelo.addConstrs(
     name="almacenamiento_promedio_minimo_suave"
 )
 
-# 3. Restricción de máximo más realista
 modelo.addConstrs(
     (
-        Beta[t,z+1] <= 0.98 * (  # 98% de eficiencia (más realista)
-            Beta[t,z] +
-            sum(SProduciendo[k,j,t] * w[j,k] * gamma[j,z] for (k,j) in product(K, JProductores)) / 365
-            - a[z]
-        )
+        Beta[t,z+1] ==  # <--- AQUI ESTÁ LA CLAVE: IGUALDAD
+        Beta[t,z] +
+        # Producción diaria
+        sum(SProduciendo[k,j,t] * w[j,k] * gamma[j,z] for (k,j) in product(K, JProductores)) / 365
+        - a[z]              # Consumo diario
+        - Vertimiento[t,z]  # Energía que se tira si la batería está llena
         for (t,z) in product(T, [0,1,2,3,4,5]) if t >= 1
     ),
-    name="10_con_perdidas_suave"
+    name="10_Balance_Estricto"
 )
 
-# 11) 
-
 modelo.addConstrs(
-    (
-        Beta[t,1] == 0 for t in T
-    ),
-    name="11)"
+    (Beta[t, 0] == Beta[t, 6] for t in T if t >= 1),
+    name="Ciclicidad_Semanal"
 )
 # 12
 # if t>=1 agregado
@@ -332,39 +346,24 @@ modelo.addConstrs(
     name="13)"
 )
 
+# Agrega esto justo después de definir Beta
+# Calcula la capacidad total instalada en el año t
+CapacidadTotal = {
+    t: sum(SProduciendo[k,j,t] * b[j] for k in K for j in JBaterias) 
+    for t in T
+}
+
+# Restricción: El nivel de carga nunca baja del 20% de la capacidad instalada
+modelo.addConstrs(
+    (Beta[t,z] >= 0.05 * CapacidadTotal[t] for t in T if t >= 1 for z in Z),
+    name="Minimo_Estado_Carga"
+)
+
 modelo.optimize()
 
 if modelo.status == GRB.OPTIMAL:
     # Crear y abrir archivo para escribir todos los resultados
     with open('resultados_completos.txt', 'w', encoding='utf-8') as f:
-        # Escribir diagnóstico detallado
-        f.write("🔍 DIAGNÓSTICO DETALLADO - AÑO 25 (CUANDO SE VACÍAN LAS BATERÍAS)\n")
-        f.write("-" * 60 + "\n")
-        
-        t_problema = 25
-        
-        # 1. Capacidad disponible
-        capacidad_total = sum(SProduciendo[k,j,t_problema].x * b[j] 
-                             for k in K for j in JBaterias)
-        f.write(f"Capacidad total baterías: {capacidad_total:,.0f} kWh\n")
-        
-        # 2. Requerimiento mínimo por restricción 6
-        requerimiento_minimo = sum(SProduciendo[k,j,t_problema].x * w[j,k] * v_guardada[j] 
-                                  for k in K for j in JProductores) / 365
-        f.write(f"Requerimiento mínimo (restricción 6): {requerimiento_minimo:,.0f} kWh\n")
-        
-        # 3. Producción vs Demanda
-        produccion_diaria = sum(SProduciendo[k,j,t_problema].x * w[j,k] 
-                               for k in K for j in JProductores) / 365
-        demanda_diaria = d[t_problema] / 365
-        f.write(f"Producción diaria: {produccion_diaria:,.0f} kWh\n")
-        f.write(f"Demanda diaria: {demanda_diaria:,.0f} kWh\n")
-        f.write(f"Exceso: {produccion_diaria - demanda_diaria:,.0f} kWh\n")
-        
-        # 4. Estado de las baterías
-        for z in Z:
-            beta_val = Beta[t_problema, z].x
-            f.write(f"Día {z}: Energía almacenada = {beta_val:,.0f} kWh\n")
 
         f.write(f"Valor óptimo (emisiones totales de CO2): {modelo.objVal:.2f} unidades\n")
         
@@ -410,7 +409,7 @@ if modelo.status == GRB.OPTIMAL:
         f.write(df_construccion.to_string(index=False) + "\n")
         
         # 3. INFRAESTRUCTURA EN OPERACIÓN POR AÑO
-        f.write("\n⚡ INFRAESTRUCTURA EN OPERACIÓN POR AÑO\n")
+        f.write("\nINFRAESTRUCTURA EN OPERACIÓN POR AÑO\n")
         f.write("-" * 50 + "\n")
         
         operacion_data = []
@@ -508,7 +507,7 @@ if modelo.status == GRB.OPTIMAL:
         for j in J:
             total_j = sum(U[k,j,t].x * p[j] for k in K for t in T)
             nombre = ["Solar Peq", "Solar Gr", "Eólica Peq", "Eólica Gr", 
-                     "Bat Litio", "Bat Flujo", "Bat Plomo"][j]
+                     "Bat Litio", "Bat Plomo", "Bat Flujo"][j]
             inversion_por_tipo[nombre] = total_j
         
         for tech, inv in inversion_por_tipo.items():
@@ -543,7 +542,7 @@ if modelo.status == GRB.OPTIMAL:
         construccion_total = {j: sum(U[k,j,t].x for k in K for t in T) for j in J}
         tech_preferida = max(construccion_total, key=construccion_total.get)
         nombres_tech = ["Solar Pequeña", "Solar Grande", "Eólica Pequeña", "Eólica Grande", 
-                       "Batería Litio", "Batería Flujo", "Batería Plomo"]
+                       "Batería Litio", "Batería Plomo", "Batería Flujo"]
         
         f.write(f"• Tecnología más construída: {nombres_tech[tech_preferida]}\n")
         f.write(f"• Total unidades: {construccion_total[tech_preferida]}\n")
